@@ -1,0 +1,280 @@
+from collections import Counter, defaultdict, deque
+from itertools import chain, combinations
+from operator import itemgetter
+import heapq
+import bisect
+
+# VERİ
+
+#nested dict - ürünleri id ile daha hızlı bulabiliriz - her ürün bir dict
+products = {
+    101: {"name": "Laptop", "category": "Elektronik", "price": 32000, "stock": 8},
+    102: {"name": "Mouse", "category": "Elektronik", "price": 900, "stock": 25},
+    103: {"name": "Klavye", "category": "Elektronik", "price": 1800, "stock": 15},
+    104: {"name": "Masa", "category": "Mobilya", "price": 6500, "stock": 5},
+    105: {"name": "Sandalye", "category": "Mobilya", "price": 4200, "stock": 12},
+}
+
+#nested list - siparişler sıralı şekilde tutulabilir  - her sipariş bir dict
+orders = [
+    {
+        "id": 1001,
+        "customer": "Ata",
+        "items": [(101, 1), (102, 2)],
+        "priority": 1,
+        "status": "bekliyor",
+    },
+    {
+        "id": 1002,
+        "customer": "Ayşe",
+        "items": [(104, 1)],
+        "priority": 3,
+        "status": "bekliyor",
+    },
+    {
+        "id": 1003,
+        "customer": "Mehmet",
+        "items": [(103, 1), (105, 2)],
+        "priority": 2,
+        "status": "bekliyor",
+    },
+]
+
+# Set -> # ürünün blocked olup olmadığını kontrol eder - "in" işlemi için set daha uygundur listeden, tekrarları kaldırır
+blocked_products = {104}
+
+# Set comprehension -> tekrarsız kategori isimleri üretir
+categories = {product["category"] for product in products.values()}
+
+# Queue - deque (double-ended queue) bekleyen müşterileri sırasıyla tutabiliriz, FIFO (ilk giren ilk çıkar) mantığı
+waiting_customers = deque(["Ata", "Ayşe", "Mehmet"])
+
+# SİPARİŞ YÖNETİMİ
+
+# sum() ve generator expression kullanıldığı için gereksiz liste oluşturulmaz.
+def calculate_total(items):
+    """
+    Siparişteki tüm ürünlerin toplam fiyatını hesaplar.
+    """
+    return sum( products[product_id]["price"] * quantity for product_id, quantity in items )
+
+# blocked_products -> set -> blocked ürün kontrolü    products-> dict -> ürün bilgilerine erişim
+# raise -> geçersiz siparişi kontrollü şekilde durdurma
+def validate_order(order):
+    """
+    Siparişin geçerli olup olmadığını kontrol eder.
+    """
+    for product_id, quantity in order["items"]:
+        if product_id not in products:
+            raise ValueError(f"Ürün bulunamadı: {product_id}")
+        if product_id in blocked_products:
+            raise ValueError( f"Ürün satışa kapalı: {products[product_id]['name']}" )
+        if quantity <= 0:
+            raise ValueError("Ürün miktarı 0'dan büyük olmalı.")
+        if products[product_id]["stock"] < quantity:
+            raise ValueError( f"Yetersiz stok: {products[product_id]['name']}" )
+    return True
+
+def process_order(order):
+    """
+    Sipariş geçerli ise stoktan düşer ve toplam sipariş tutarını return eder.
+    """
+    validate_order(order)
+    for product_id, quantity in order["items"]:
+        products[product_id]["stock"] -= quantity
+    order["status"] = "tamamlandı"
+    return calculate_total(order["items"])
+
+# PRIORITY QUEUE
+  
+# heapq sayesinde en küçük priority değeri sürekli en önde olur.
+def build_priority_queue(orders):
+    """
+    Siparişler öncelik kuyruğuna dönüştürülür.
+    Önceliği yüksek olan sipariş önce işlenir.
+    Böylelikle tüm listeyi her seferinde sıralamak gerekmez.
+    heap:
+        1 -> en yüksek
+        2
+        3 -> daha düşük
+    """
+    queue = []
+    for order in orders:
+        heapq.heappush( queue, (order["priority"], order["id"], order) )
+    return queue
+
+# heapq.heappop() her seferinde sıradaki öncelikli siparişi verir.
+# try/except sayesinde hatalı sipariş tüm sistemi durdurmaz.
+def process_priority_orders(orders):
+    """
+    Siparişleri öncelik sırasına göre işler.    
+    """
+    queue = build_priority_queue(orders)
+    completed = []
+    while queue:
+        _, _, order = heapq.heappop(queue)
+        try:
+            total = process_order(order)
+            completed.append({
+                "id": order["id"],
+                "customer": order["customer"],
+                "total": total,
+                "status": order["status"],
+            })
+        except ValueError as error:
+            order["status"] = "reddedildi"
+            completed.append({
+                "id": order["id"],
+                "customer": order["customer"],
+                "total": 0,
+                "status": f"REDDİLDİ: {error}",
+            })
+    return completed
+
+# RAPORLAMA
+
+# defaultdict -> kategori bazlı toplamları kolayca oluşturur.
+# Counter -> hangi ürünün kaç kez satıldığını sayar.
+def create_report(orders):
+    """
+    Counter + defaultdict ile satış verilerinin analizi.
+    """
+    category_sales = defaultdict(int)
+    product_counter = Counter()
+    for order in orders:
+        if order["status"] != "tamamlandı":
+            continue
+        for product_id, quantity in order["items"]:
+            product = products[product_id]
+            category_sales[product["category"]] += quantity
+            product_counter[product["name"]] += quantity
+    return category_sales, product_counter
+
+#List comprehension + filter mantığı
+def low_stock_products(limit=5):
+    """
+    Stok seviyesi belirlenen sınırın altında olan ürünleri bulur.
+    """
+    return [ product for product in products.values() if product["stock"] <= limit ]
+
+# SIRALAMA
+
+# sorted() -> yeni liste döndürür ve orijinal veriyi değiştirmez.
+# itemgetter("price") -> sıralama anahtarını belirtir.
+# itemgetter ile lambda yerine daha temiz sıralama yapılır.
+def products_by_price():
+    """
+    Ürünleri fiyata göre sıralar.
+    """
+    return sorted( products.values(), key=itemgetter("price"), reverse=True )
+
+# FİYAT İNDEKSİ
+
+# Sıralı liste daha sonra bisect ile hızlı konum bulmak için kullanılır.
+def create_price_index():
+    """
+    Sıralı fiyat listesi oluşturur.
+    """
+    prices = sorted( product["price"] for product in products.values() )
+    return prices
+
+# ÜRÜN KOMBİNASYONLARI
+
+# Combinations -> aynı ürünün kendisiyle eşleşmesini ve gereksiz tekrarları önler.
+def possible_bundles():
+    """
+    Ürünler arasında 2'li kampanya kombinasyonları üretir.
+    """
+    names = [ product["name"] for product in products.values() ]
+    return list(combinations(names, 2))
+
+# GENEL RAPOR
+
+# *args + **kwargs kullanımı
+# *args -> kaç rapor isteneceğini değişken sayıda alır.
+# **kwargs -> ek rapor seçeneklerini isimle alır.
+def report(*sections, **options):
+    """
+    Farklı rapor bölümlerini çalıştırır. Örnek: report("stok", "satış", detay=True)
+    """
+    print("\n" + "=" * 50)
+    print("SMART ORDER MANAGER")
+    print("=" * 50)
+    # Kullanıcı "stok" isterse düşük stok raporu oluşturulur.
+    if "stok" in sections:
+        print("\nDÜŞÜK STOK")
+        for product in low_stock_products():
+            print( f"- {product['name']}: " 
+                   f"{product['stock']} adet" )
+    # Kullanıcı "satış" isterse satış analizi oluşturulur.
+    if "satış" in sections:
+        category_sales, product_counter = create_report( orders )
+        print("\nKATEGORİ SATIŞLARI")
+        for category, quantity in category_sales.items():
+            print(f"- {category}: {quantity}")
+        print("\nEN ÇOK SATILANLAR")
+        for name, quantity in product_counter.most_common():
+            print(f"- {name}: {quantity}")
+    # **kwargs içindeki detay seçeneğini kontrol eder.
+    if options.get("detay"):
+        print("\nÜRÜNLER")
+        for product in products_by_price():
+            print( f"{product['name']:<10} "
+                   f"{product['price']:>8.2f} TL | "
+                   f"stok: {product['stock']}"  )
+
+# MAIN PROGRAM
+
+def main():
+    """    
+    Programın ana akışını yönetir.
+    Diğer fonksiyonları doğru sırayla çağırır.
+    """
+    print("Siparişler öncelik sırasıyla işleniyor...\n")
+    completed = process_priority_orders(orders)
+    for order in completed:
+        print( f"Sipariş #{order['id']} | "
+               f"{order['customer']} | "
+               f"{order['status']} | "
+               f"{order['total']:.2f} TL"  )
+    
+    # *args + **kwargs
+    report( "stok", "satış", detay=True )
+    
+    # Queue oluşturup while ile bekleyenler sırayla kuyruktan çıkarılır
+    # popleft() işlemi list.pop(0)'dan daha verimli
+    print("\nMÜŞTERİ KUYRUĞU")
+    while waiting_customers:
+        customer = waiting_customers.popleft()
+        print(f"Sıradaki müşteri: {customer}")
+    
+    print("\nKATEGORİLER")
+    print(categories)
+    
+    # Bisect -> Sıralı fiyat listesinde yeni fiyatın yerini hızlı şekilde bulur
+    prices = create_price_index()
+    new_price = 2500
+    position = bisect.bisect_left(prices, new_price)
+    print( f"\n{new_price} TL fiyatı sıralı listede "
+           f"{position}. pozisyona gelir." )
+
+    # itertools.combinations - kampanya oluşturmak için ürün çiftleri üretilir    
+    print("\nÖRNEK ÜRÜN KOMBİNASYONLARI")
+    for bundle in possible_bundles()[:3]:
+        print(f"- {' + '.join(bundle)}")
+
+    # itertools.chain - birden fazla listeyi tek akış üzerinden dolaşabiliriz    
+    elektronik = [ product["name"] for product in products.values() if product["category"] == "Elektronik" ]
+    mobilya = [ product["name"] for product in products.values() if product["category"] == "Mobilya" ]
+    print("\nTÜM ÜRÜNLER")
+    for product in chain(elektronik, mobilya):
+        print(f"- {product}")
+
+# dosyanın doğrudan çalıştırılıp çalıştırılmadığını kontrol eder.
+# Başka bir dosyadan import edilirse main() otomatik olarak çalışmaz.
+if __name__ == "__main__":
+    main()
+
+
+
+
