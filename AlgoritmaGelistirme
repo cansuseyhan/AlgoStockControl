@@ -15,12 +15,12 @@ products = {
     105: {"name": "Sandalye", "category": "Mobilya", "price": 4200, "stock": 12},
 }
 
-#nested list - siparişler sıralı şekilde tutulabilir  - her sipariş bir dict
+#nested list-dict in list - siparişler sıralı şekilde tutulabilir  - her sipariş bir dict
 orders = [
     {
         "id": 1001,
         "customer": "Ata",
-        "items": [(101, 1), (102, 2)],
+        "items": [(101, 1), (102, 2)], # tuples in list (product_id,count)
         "priority": 1,
         "status": "bekliyor",
     },
@@ -87,11 +87,11 @@ def process_order(order):
 
 # PRIORITY QUEUE
   
-# heapq sayesinde en küçük priority değeri sürekli en önde olur.
+# heapq sayesinde en küçük priority değeri sürekli en önde olur.min-heap yapısı
 def build_priority_queue(orders):
     """
     Siparişler öncelik kuyruğuna dönüştürülür.
-    Önceliği yüksek olan sipariş önce işlenir.
+    Priority değeri küçük olan sipariş daha yüksek önceliklidir.
     Böylelikle tüm listeyi her seferinde sıralamak gerekmez.
     heap:
         1 -> en yüksek
@@ -100,7 +100,8 @@ def build_priority_queue(orders):
     """
     queue = []
     for order in orders:
-        heapq.heappush( queue, (order["priority"], order["id"], order) )
+        if order["status"] == "bekliyor":
+            heapq.heappush( queue, (order["priority"], order["id"], order) )
     return queue
 
 # heapq.heappop() her seferinde sıradaki öncelikli siparişi verir.
@@ -274,7 +275,3 @@ def main():
 # Başka bir dosyadan import edilirse main() otomatik olarak çalışmaz.
 if __name__ == "__main__":
     main()
-
-
-
-
